@@ -4,10 +4,11 @@
 
 | Campo | Detalle |
 |-------|---------|
-| **Duración** | 7 horas (9:00 AM - 4:00 PM, incluye almuerzo) |
-| **Modalidad** | Desarrollo + Defensa de código |
+| **Fecha** | Jueves 9 de enero de 2025 |
+| **Duración** | 7 horas (9:00 AM - 4:00 PM, hora Perú UTC-5) |
+| **Modalidad** | Desarrollo + Defensa de código (Loom) |
 | **Stack** | C# .NET 8, PostgreSQL, React o Blazor |
-| **Herramientas** | Puedes usar cualquier recurso (IA, documentación, etc.) |
+| **Herramientas** | Puedes usar cualquier recurso (IA, documentación, librerías, etc.) |
 
 ---
 
@@ -19,7 +20,7 @@ Eres parte del equipo de desarrollo de una empresa de software contable en Perú
 
 ## Requerimientos
 
-### Backend - API REST (2 horas)
+### Backend - API REST
 
 Construir una API con los siguientes endpoints:
 
@@ -37,33 +38,113 @@ Comprobante
 ├── Id (GUID)
 ├── Tipo (Factura | Boleta)
 ├── Serie (string, 4 caracteres)
-├── Numero (int)
-├── FechaEmision (DateTime)
-├── RucEmisor (string, 11 dígitos)
-├── RazonSocialEmisor (string)
-├── RucReceptor (string, 11 dígitos)
-├── RazonSocialReceptor (string)
-├── SubTotal (decimal)
-├── IGV (decimal, calculado)
-├── Total (decimal, calculado)
-├── Estado (Emitido | Anulado)
-└── Items[]
-    ├── Descripcion (string)
-    ├── Cantidad (int)
-    ├── PrecioUnitario (decimal)
-    └── Subtotal (decimal, calculado)
+├── Numero (int, autoincremental por serie, persistente en BD)
+├── FechaEmision (DateTime, generada automáticamente al crear)
+├── RucEmisor (string, 11 dígitos) [Obligatorio]
+├── RazonSocialEmisor (string) [Obligatorio]
+├── RucReceptor (string, 11 dígitos) [Obligatorio solo para Facturas, opcional para Boletas]
+├── RazonSocialReceptor (string) [Obligatorio solo para Facturas]
+├── SubTotal (decimal, calculado = suma de Items.Subtotal)
+├── IGV (decimal, calculado = SubTotal * 0.18)
+├── Total (decimal, calculado = SubTotal + IGV)
+├── Estado (Emitido | Anulado, inicial siempre "Emitido")
+└── Items[] [Mínimo 1 item requerido]
+    ├── Descripcion (string) [Obligatorio]
+    ├── Cantidad (decimal, permite fracciones ej: 0.5, 2.5)
+    ├── PrecioUnitario (decimal) [Obligatorio]
+    └── Subtotal (decimal, calculado = Cantidad * PrecioUnitario)
 ```
+
+**Nota**: Los campos marcados como "calculado" no se reciben en el request, se calculan automáticamente.
 
 ### Reglas de Negocio
 
 1. **RUC**: Debe tener exactamente 11 dígitos numéricos
 2. **IGV**: Se calcula como el 18% del subtotal
 3. **Total**: SubTotal + IGV
-4. **Serie**: 
+4. **SubTotal**: Suma de todos los `Items.Subtotal`
+5. **Serie**: 
    - Facturas: Formato `F###` (ej: F001, F002)
    - Boletas: Formato `B###` (ej: B001, B002)
-5. **Anulación**: No se puede anular un comprobante ya anulado
-6. **Número**: Autoincremental por serie
+6. **Anulación**: No se puede anular un comprobante ya anulado
+7. **Número**: Autoincremental por serie, debe persistir en base de datos (si existen F001-1, F001-2, el siguiente debe ser F001-3)
+8. **Receptor en Boletas**: RucReceptor y RazonSocialReceptor son opcionales para Boletas (consumidor final)
+
+### Ejemplos de Request/Response
+
+**POST /api/comprobantes** - Crear comprobante:
+
+```json
+{
+  "tipo": "Factura",
+  "serie": "F001",
+  "rucEmisor": "20123456789",
+  "razonSocialEmisor": "Mi Empresa S.A.C.",
+  "rucReceptor": "20987654321",
+  "razonSocialReceptor": "Cliente S.A.",
+  "items": [
+    {
+      "descripcion": "Servicio de consultoría",
+      "cantidad": 1,
+      "precioUnitario": 1000.00
+    },
+    {
+      "descripcion": "Horas adicionales",
+      "cantidad": 2.5,
+      "precioUnitario": 150.00
+    }
+  ]
+}
+```
+
+**Response 201 Created**:
+
+```json
+{
+  "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "tipo": "Factura",
+  "serie": "F001",
+  "numero": 1,
+  "fechaEmision": "2025-01-09T10:30:00Z",
+  "rucEmisor": "20123456789",
+  "razonSocialEmisor": "Mi Empresa S.A.C.",
+  "rucReceptor": "20987654321",
+  "razonSocialReceptor": "Cliente S.A.",
+  "subTotal": 1375.00,
+  "igv": 247.50,
+  "total": 1622.50,
+  "estado": "Emitido",
+  "items": [
+    {
+      "descripcion": "Servicio de consultoría",
+      "cantidad": 1,
+      "precioUnitario": 1000.00,
+      "subtotal": 1000.00
+    },
+    {
+      "descripcion": "Horas adicionales",
+      "cantidad": 2.5,
+      "precioUnitario": 150.00,
+      "subtotal": 375.00
+    }
+  ]
+}
+```
+
+**Response 400 Bad Request** (ProblemDetails):
+
+```json
+{
+  "type": "https://tools.ietf.org/html/rfc7807",
+  "title": "Validation Error",
+  "status": 400,
+  "detail": "Uno o más errores de validación ocurrieron.",
+  "errors": {
+    "rucEmisor": ["El RUC debe tener exactamente 11 dígitos numéricos"],
+    "serie": ["El formato de serie para Factura debe ser F### (ej: F001)"]
+  }
+}
+```
 
 ### Filtros para el Listado
 
@@ -71,13 +152,13 @@ Comprobante
 - `tipo`: Filtrar por Factura o Boleta
 - `rucReceptor`: Búsqueda por RUC del cliente
 - `estado`: Filtrar por Emitido o Anulado
-- `page` y `pageSize`: Paginación
+- `page` y `pageSize`: Paginación (default: page=1, pageSize=10, máximo pageSize=50)
 
 ---
 
-### Frontend (1 hora)
+### Frontend
 
-Construir una interfaz simple con:
+Construir una interfaz simple que **consuma la API REST** desarrollada:
 
 1. **Listado de comprobantes**
    - Tabla con los datos principales
@@ -93,15 +174,17 @@ Construir una interfaz simple con:
    - Botón en cada fila o en el detalle
    - Confirmación antes de anular
 
+**Nota**: El frontend debe estar integrado con la API, no usar datos mock.
+
 ---
 
 ### Requerimientos Adicionales
 
-- Tests unitarios para las validaciones de negocio
-- Documentación Swagger/OpenAPI
-- Manejo de errores con ProblemDetails (RFC 7807)
-- Logging estructurado
-- Docker Compose funcional
+- **Tests unitarios**: Mínimo un test por cada regla de negocio (validación RUC, cálculo IGV, formato serie, etc.)
+- **Documentación Swagger/OpenAPI**: Todos los endpoints documentados con ejemplos de request/response
+- **Manejo de errores con ProblemDetails (RFC 7807)**: Respuestas de error estructuradas y consistentes
+- **Logging estructurado**: Loggear creación, anulación y errores de comprobantes (usar Serilog o similar)
+- **Docker Compose funcional**: Debe levantar la API y PostgreSQL con un solo comando `docker-compose up`
 
 ---
 
@@ -110,15 +193,20 @@ Construir una interfaz simple con:
 1. **Crea un repositorio en tu cuenta personal de GitHub**
    - Nombre sugerido: `reto-fullstack-contasiscorp`
    - Puede ser público o privado
+   - **Monorepo**: Backend y Frontend deben estar en el mismo repositorio
 
 2. **Agrega como colaborador a**: `alejandro.xux`
    - Ve a Settings → Collaborators → Add people
    - Esto es **obligatorio** para que podamos revisar tu código
 
 3. **Configura tu entorno de desarrollo como prefieras**
-   - Necesitarás: .NET 8 SDK, PostgreSQL, y Node.js (si usas React)
+   - .NET 8 SDK
+   - PostgreSQL 15+
+   - Node.js 18+ y React 18+ (si usas React) o Blazor WebAssembly/.NET 8 (si usas Blazor)
 
-4. **Haz commits frecuentes** con mensajes descriptivos
+4. **Librerías permitidas**: Puedes usar cualquier librería del ecosistema .NET (MediatR, AutoMapper, FluentValidation, etc.) y de React/Blazor
+
+5. **Haz commits frecuentes** con mensajes descriptivos
 
 ---
 
@@ -157,10 +245,11 @@ tu-repositorio/
 
 | Criterio | Peso | Descripción |
 |----------|------|-------------|
-| **Funcionalidad** | 25% | Los endpoints funcionan correctamente |
-| **Arquitectura** | 25% | Separación de responsabilidades, Clean Architecture |
-| **Código C#** | 20% | Uso idiomático del lenguaje, async/await, manejo de errores |
+| **Funcionalidad** | 20% | Los endpoints funcionan correctamente |
+| **Arquitectura** | 20% | Separación de responsabilidades, Clean Architecture |
+| **Código C#** | 15% | Uso idiomático del lenguaje, async/await, manejo de errores |
 | **Frontend** | 15% | Interfaz funcional y usable |
+| **Requerimientos Adicionales** | 15% | Tests, Swagger, ProblemDetails, Logging, Docker Compose |
 | **Video de defensa** | 15% | Claridad al explicar, dominio del código, respuestas coherentes |
 
 ---
@@ -171,9 +260,10 @@ Después de completar el desarrollo, debes grabar un video explicando tu soluci�
 
 ### Instrucciones del Video
 
-1. **Graba tu pantalla usando [Loom](https://www.loom.com/)** (cuenta gratuita disponible)
+1. **Crea una cuenta gratuita en [Loom](https://www.loom.com/signup)** y graba tu pantalla
 2. **Duración máxima: 30 minutos**
-3. **Envía el link del video** junto con el link de tu repositorio
+3. **Formato**: Pantalla completa + cámara (tu rostro visible)
+4. **Envía el link del video** junto con el link de tu repositorio
 
 ### Contenido del Video
 
@@ -227,9 +317,12 @@ Enviar a:
 
 1. **Prioriza funcionalidad sobre perfección**: Es mejor tener algo funcionando que código perfecto incompleto
 2. **Commits frecuentes**: Haz commits pequeños con mensajes descriptivos
-3. **Entiende lo que escribes**: Vas a tener que explicarlo y modificarlo
-4. **Pregunta si tienes dudas**: Sobre requerimientos de negocio, no sobre implementación
+3. **Entiende lo que escribes**: Vas a tener que explicarlo en el video
+4. **No hay soporte durante el reto**: Este documento contiene toda la información necesaria
 
 ---
 
-¡Buena suerte!
+Welcome to the matrix
+
+Alejandro mayta
+CTO Contasiscorp
